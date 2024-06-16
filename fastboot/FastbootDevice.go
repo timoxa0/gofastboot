@@ -1,6 +1,7 @@
 package fastboot
 
 import (
+	"errors"
 	"fmt"
 	"log"
 
@@ -19,6 +20,12 @@ var Status = struct {
 	FAIL: "FAIL",
 	DATA: "DATA",
 	INFO: "INFO",
+}
+
+var Error = struct {
+	VarNotFound error
+}{
+	VarNotFound: errors.New("Variable not found"),
 }
 
 type FastbootDevice struct {
@@ -146,6 +153,18 @@ func (d *FastbootDevice) Recv() (FastbootResponseStatus, []byte, error) {
 		status = Status.INFO
 	}
 	return status, data[4:], nil
+}
+
+func (d *FastbootDevice) GerVar(variable string) (string, error) {
+	d.Send([]byte(fmt.Sprintf("getvar:%s", variable)))
+	status, resp, err := d.Recv()
+	if status == Status.FAIL {
+		err = Error.VarNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	return string(resp), nil
 }
 
 func (d *FastbootDevice) BootImage(data []byte) error {
