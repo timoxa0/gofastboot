@@ -3,7 +3,6 @@ package fastboot
 import (
 	"errors"
 	"fmt"
-	"log"
 
 	"github.com/google/gousb"
 )
@@ -23,9 +22,11 @@ var Status = struct {
 }
 
 var Error = struct {
-	VarNotFound error
+	VarNotFound    error
+	DeviceNotFound error
 }{
-	VarNotFound: errors.New("Variable not found"),
+	VarNotFound:    errors.New("variable not found"),
+	DeviceNotFound: gousb.ErrorNotFound,
 }
 
 type FastbootDevice struct {
@@ -53,7 +54,6 @@ func FindDevices(ctx *gousb.Context) ([]FastbootDevice, error) {
 	for _, dev := range devs {
 		serial, err := dev.SerialNumber()
 		if err != nil {
-			log.Fatalf("Error retriving serial number for device: %v", err)
 			continue
 		}
 		fastbootDevices = append(fastbootDevices, FastbootDevice{Serial: serial, Device: dev})
@@ -82,7 +82,6 @@ func FindDevice(ctx *gousb.Context, serial string) (FastbootDevice, error) {
 	for _, dev := range devs {
 		serialNumber, err := dev.SerialNumber()
 		if err != nil {
-			log.Fatalf("Error retriving serial number for device: %v", err)
 			continue
 		}
 		if serial != serialNumber {
@@ -91,7 +90,7 @@ func FindDevice(ctx *gousb.Context, serial string) (FastbootDevice, error) {
 		return FastbootDevice{Serial: serial, Device: dev}, nil
 	}
 
-	return fastbootDevice, fmt.Errorf("Devide with serial %s not found", serial)
+	return fastbootDevice, Error.DeviceNotFound
 }
 
 func (d *FastbootDevice) Send(data []byte) error {
@@ -139,7 +138,7 @@ func (d *FastbootDevice) Recv() (FastbootResponseStatus, []byte, error) {
 
 	var data []byte
 	buf := make([]byte, inEndpoint.Desc.MaxPacketSize)
-	n, err := inEndpoint.Read(buf)
+	n, _ := inEndpoint.Read(buf)
 	data = append(data, buf[:n]...)
 	var status FastbootResponseStatus
 	switch string(data[:4]) {
@@ -168,7 +167,7 @@ func (d *FastbootDevice) GerVar(variable string) (string, error) {
 }
 
 func (d *FastbootDevice) BootImage(data []byte) error {
-	err := d.download(data)
+	err := d.Download(data)
 	if err != nil {
 		return err
 	}
@@ -181,7 +180,28 @@ func (d *FastbootDevice) BootImage(data []byte) error {
 	status, data, err := d.Recv()
 	switch {
 	case status != Status.OKAY:
-		return fmt.Errorf("Failed to boot image: %s %s", status, data)
+		return fmt.Errorf("failed to boot image: %s %s", status, data)
+	case err != nil:
+		return err
+	}
+	return nil
+}
+
+func (d *FastbootDevice) Flash(partition string, data []byte) error {
+	err := d.Download(data)
+	if err != nil {
+		return err
+	}
+
+	err = d.Send([]byte(fmt.Sprintf("flash:%s", partition)))
+	if err != nil {
+		return err
+	}
+
+	status, data, err := d.Recv()
+	switch {
+	case status != Status.OKAY:
+		return fmt.Errorf("failed to flash image: %s %s", status, data)
 	case err != nil:
 		return err
 	}
@@ -189,7 +209,7 @@ func (d *FastbootDevice) BootImage(data []byte) error {
 	return nil
 }
 
-func (d *FastbootDevice) download(data []byte) error {
+func (d *FastbootDevice) Download(data []byte) error {
 	data_size := len(data)
 	err := d.Send([]byte(fmt.Sprintf("download:%08x", data_size)))
 	if err != nil {
@@ -199,7 +219,7 @@ func (d *FastbootDevice) download(data []byte) error {
 	status, _, err := d.Recv()
 	switch {
 	case status != Status.DATA:
-		return fmt.Errorf("Failed to start data phase: %s", status)
+		return fmt.Errorf("failed to start data phase: %s", status)
 	case err != nil:
 		return err
 	}
@@ -219,7 +239,7 @@ func (d *FastbootDevice) download(data []byte) error {
 	status, data, err = d.Recv()
 	switch {
 	case status != Status.OKAY:
-		return fmt.Errorf("Failed to finish data phase: %s %s", status, data)
+		return fmt.Errorf("failed to finish data phase: %s %s", status, data)
 	case err != nil:
 		return err
 	}
